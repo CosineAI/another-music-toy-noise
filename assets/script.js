@@ -40,6 +40,9 @@ console.log("Static site loaded!");
   masterGain.gain.value = 0.25;
   masterGain.connect(audioCtx.destination);
 
+  const PREVIEW_LEVEL = 0.12;
+  const PLAY_LEVEL = 0.35;
+
   const activeKeys = new Set(); // lowercased keys currently held
 
   // Utility: map x to musical frequency (A2 to A6, 4 octaves, exponential)
@@ -349,11 +352,11 @@ console.log("Static site loaded!");
       }
     }
 
-    start() {
+    start(amplitude = PLAY_LEVEL) {
       const now = audioCtx.currentTime;
       this.amp.gain.cancelScheduledValues(now);
       this.amp.gain.setValueAtTime(0, now);
-      this.amp.gain.linearRampToValueAtTime(0.35, now + 0.06);
+      this.amp.gain.linearRampToValueAtTime(amplitude, now + 0.06);
       this.osc.start(now);
     }
 
@@ -361,6 +364,12 @@ console.log("Static site loaded!");
       const now = audioCtx.currentTime;
       this.osc.frequency.setTargetAtTime(freq, now, 0.01);
       this.filter.frequency.setTargetAtTime(cutoff, now, 0.01);
+    }
+
+    setAmplitude(target = PLAY_LEVEL, ramp = 0.04) {
+      const now = audioCtx.currentTime;
+      this.amp.gain.cancelScheduledValues(now);
+      this.amp.gain.setTargetAtTime(target, now, ramp);
     }
 
     stop() {
@@ -404,7 +413,7 @@ console.log("Static site loaded!");
     return base;
   };
 
-  const startPointerVoice = (x, y) => {
+  const startPointerVoice = (x, y, ampLevel = PLAY_LEVEL) => {
     pointer.x = x; pointer.y = y;
     if (!pointerVoice) {
       const keysSnapshot = new Set(activeKeys);
@@ -414,9 +423,10 @@ console.log("Static site loaded!");
         cutoff: cutoffFromY(y),
         keys
       });
-      pointerVoice.start();
+      pointerVoice.start(ampLevel);
     } else {
       pointerVoice.update(freqFromX(x), cutoffFromY(y));
+      pointerVoice.setAmplitude(ampLevel);
     }
   };
 
@@ -475,7 +485,7 @@ console.log("Static site loaded!");
     await resumeAudio();
     const { x, y } = getLocalPos(evt);
     pointer.down = true;
-    startPointerVoice(x, y);
+    startPointerVoice(x, y, PLAY_LEVEL);
   });
 
   canvas.addEventListener('pointermove', (evt) => {
@@ -483,11 +493,28 @@ console.log("Static site loaded!");
     if (pointer.down) {
       updatePointerVoice(x, y);
     } else {
-      pointer.x = x; pointer.y = y;
+      // live preview while hovering
+      startPointerVoice(x, y, PREVIEW_LEVEL);
     }
   });
 
   canvas.addEventListener('pointerup', () => {
+    pointer.down = false;
+    if (pointerVoice) {
+      pointerVoice.setAmplitude(PREVIEW_LEVEL);
+    } else {
+      startPointerVoice(pointer.x, pointer.y, PREVIEW_LEVEL);
+    }
+  });
+
+  // Hover enter/leave to manage preview lifecycle
+  canvas.addEventListener('pointerenter', (evt) => {
+    resumeAudio();
+    const { x, y } = getLocalPos(evt);
+    startPointerVoice(x, y, PREVIEW_LEVEL);
+  });
+
+  canvas.addEventListener('pointerleave', () => {
     pointer.down = false;
     stopPointerVoice();
   });
@@ -510,13 +537,16 @@ console.log("Static site loaded!");
       return;
     }
 
+    // Resume audio on any key press to enable preview
+    resumeAudio();
+
     const k = (evt.key || '').toLowerCase();
     if (effectKeys.has(k) && !activeKeys.has(k)) {
       activeKeys.add(k);
       if (pointerVoice) {
         const { x, y } = pointer;
         stopPointerVoice();
-        startPointerVoice(x, y);
+        startPointerVoice(x, y, pointer.down ? PLAY_LEVEL : PREVIEW_LEVEL);
       }
       draw();
     }
@@ -533,7 +563,7 @@ console.log("Static site loaded!");
       if (pointerVoice) {
         const { x, y } = pointer;
         stopPointerVoice();
-        startPointerVoice(x, y);
+        startPointerVoice(x, y, pointer.down ? PLAY_LEVEL : PREVIEW_LEVEL);
       }
       draw();
     }
@@ -544,7 +574,7 @@ console.log("Static site loaded!");
     if (pointerVoice) {
       const { x, y } = pointer;
       stopPointerVoice();
-      startPointerVoice(x, y);
+      startPointerVoice(x, y, pointer.down ? PLAY_LEVEL : PREVIEW_LEVEL);
     }
     draw();
   });
@@ -597,11 +627,11 @@ console.log("Static site loaded!");
     }
 
     // pointer indicator + current effects ring
-    if (pointer.down || pointerVoice) {
+    if (pointerVoice) {
       ctx2d.save();
       ctx2d.beginPath();
-      ctx2d.arc(pointer.x, pointer.y, 10, 0, Math.PI * 2);
-      ctx2d.fillStyle = 'rgba(59,130,246,0.85)';
+      ctx2d.arc(pointer.x, pointer.y, pointer.down ? 10 : 8, 0, Math.PI * 2);
+      ctx2d.fillStyle = pointer.down ? 'rgba(59,130,246,0.85)' : 'rgba(59,130,246,0.65)';
       ctx2d.fill();
       ctx2d.strokeStyle = 'rgba(59,130,246,0.35)';
       ctx2d.lineWidth = 2;
