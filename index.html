@@ -3,12 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>My Static Site</title>
+  <title>Mouse Music Toy</title>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
   <main>
-    <h1>Welcome to Your Static Site</h1>
+    <h1>Mouse Music Toy</h1>
+    <p class="subtitle">Move your mouse: X controls pitch, Y controls tone. Click to mark and sustain a note with the current effects. Hold keys to add live effects.</p>
+
+    <div class="controls">
+      <button id="clearCanvas" class="btn">Clear Screen</button>
+      <div class="legend">
+        <span><strong>Z</strong> Vibrato</span>
+        <span><strong>X</strong> Tremolo</span>
+        <span><strong>C</strong> Delay</span>
+        <span><strong>V</strong> Distortion</span>
+        <span><strong>B</strong> Reverb</span>
+      </div>
+    </div>
+
+    <canvas id="playCanvas" aria-label="Play area: click to sustain notes"></canvas>
+    <p class="hint">Tip: Try drawing patterns and holding different keys while you click to capture unique textures.</p>
   </main>
   <footer>
     <p>&copy; 2025 Your Name</p>
