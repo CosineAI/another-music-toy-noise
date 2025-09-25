@@ -104,11 +104,18 @@ footer {
 }
 
 .legend {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.4rem 0.8rem;
   color: #e5e7eb;
   font-size: 0.85rem;
+  max-width: min(90vw, 900px);
+}
+.legend span {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  white-space: nowrap;
 }
 .legend span strong {
   color: #ffffff;
