@@ -89,6 +89,30 @@ console.log("Static site loaded!");
     return curve;
   };
 
+  // Bitcrusher curve (amplitude quantization)
+  const makeBitcrusherCurve = (bits = 4) => {
+    const steps = Math.max(2, 1 << bits);
+    const n = 2048;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      const step = 2 / steps;
+      curve[i] = Math.round(x / step) * step;
+    }
+    return curve;
+  };
+
+  // Rectifier curve (full-wave rectification -> octave-like effect)
+  const makeRectifierCurve = () => {
+    const n = 2048;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      curve[i] = Math.abs(x);
+    }
+    return curve;
+  };
+
   // Simple impulse for Convolver (algorithmic reverb)
   const createImpulseBuffer = (ctx, seconds = 2.5, decay = 0.4) => {
     const rate = ctx.sampleRate;
@@ -104,21 +128,34 @@ console.log("Static site loaded!");
     return impulse;
   };
 
-  // Effect color map for visual rings
+  // Effect color map for visual rings (A–Z)
   const effectColors = {
-    z: '#3b82f6', // Vibrato
-    x: '#f59e0b', // Tremolo
-    c: '#10b981', // Delay
-    v: '#ef4444', // Distortion
-    b: '#8b5cf6', // Reverb
     a: '#22d3ee', // Autopan
+    b: '#8b5cf6', // Reverb
+    c: '#10b981', // Delay
+    d: '#9ca3af', // Bitcrusher
+    e: '#fcd34d', // Echo (multi-tap delay)
     f: '#0ea5e9', // Flanger
-    m: '#34d399', // Chorus
-    p: '#f472b6', // Phaser
+    g: '#4ade80', // Compressor
     h: '#7c3aed', // Highpass
+    i: '#60a5fa', // Stereo spread
+    j: '#ef9a9a', // Bandpass sweep
+    k: '#94a3b8', // Comb filter
+    l: '#d97706', // Warmth (LP + soft sat)
+    m: '#34d399', // Chorus
     n: '#6b7280', // Noise
+    o: '#fb923c', // Rectifier (octave-like)
+    p: '#f472b6', // Phaser
+    q: '#f87171', // Randomize (visual only)
     r: '#eab308', // RingMod
     s: '#fb7185', // Saturation
+    t: '#22c55e', // Wow (slow pitch LFO)
+    u: '#fde68a', // Exciter (high-shelf + sat)
+    v: '#ef4444', // Distortion
+    w: '#14b8a6', // Auto-wah
+    x: '#f59e0b', // Tremolo
+    y: '#a78bfa', // Phase-wash (alt phaser)
+    z: '#3b82f6', // Vibrato
   };
 
   const FX_KEYS = Object.keys(effectColors);
@@ -298,6 +335,190 @@ console.log("Static site loaded!");
         wetPrev = hp;
       }
 
+      // Bitcrusher (D) — amplitude quantization via waveshaper
+      if (keys.has('d')) {
+        const crusher = audioCtx.createWaveShaper();
+        crusher.curve = makeBitcrusherCurve(randInt(3, 6));
+        crusher.oversample = 'none';
+        wetPrev.connect(crusher);
+        wetPrev = crusher;
+      }
+
+      // Echo (E) — multi-tap delays summed
+      if (keys.has('e')) {
+        const sum = audioCtx.createGain();
+        const d1 = audioCtx.createDelay(5.0);
+        d1.delayTime.value = rand(0.20, 0.32);
+        const fb1 = audioCtx.createGain();
+        fb1.gain.value = rand(0.25, 0.45);
+        d1.connect(fb1);
+        fb1.connect(d1);
+
+        const d2 = audioCtx.createDelay(5.0);
+        d2.delayTime.value = d1.delayTime.value * rand(1.8, 2.4);
+        const fb2 = audioCtx.createGain();
+        fb2.gain.value = rand(0.15, 0.35);
+        d2.connect(fb2);
+        fb2.connect(d2);
+
+        wetPrev.connect(d1);
+        wetPrev.connect(d2);
+        d1.connect(sum);
+        d2.connect(sum);
+
+        wetPrev = sum;
+      }
+
+      // Compressor (G)
+      if (keys.has('g')) {
+        const comp = audioCtx.createDynamicsCompressor();
+        comp.threshold.value = -24;
+        comp.knee.value = 8;
+        comp.ratio.value = 4;
+        comp.attack.value = 0.003;
+        comp.release.value = 0.25;
+        wetPrev.connect(comp);
+        wetPrev = comp;
+      }
+
+      // Stereo spread (I) — small L/R delays panned wide
+      if (keys.has('i')) {
+        const sum = audioCtx.createGain();
+        const dL = audioCtx.createDelay(0.03);
+        dL.delayTime.value = rand(0.006, 0.012);
+        const dR = audioCtx.createDelay(0.03);
+        dR.delayTime.value = rand(0.010, 0.018);
+
+        const pL = audioCtx.createStereoPanner();
+        pL.pan.value = -0.6;
+        const pR = audioCtx.createStereoPanner();
+        pR.pan.value = 0.6;
+
+        wetPrev.connect(dL);
+        wetPrev.connect(dR);
+        dL.connect(pL);
+        dR.connect(pR);
+        pL.connect(sum);
+        pR.connect(sum);
+
+        wetPrev = sum;
+      }
+
+      // Bandpass sweep (J) — bandpass filter moved by LFO
+      if (keys.has('j')) {
+        this.bandpass = audioCtx.createBiquadFilter();
+        this.bandpass.type = 'bandpass';
+        this.bandpass.Q.value = rand(3, 8);
+        this.bandpassLfo = audioCtx.createOscillator();
+        this.bandpassLfo.frequency.value = rand(0.2, 1.5);
+        const bpDepth = audioCtx.createGain();
+        bpDepth.gain.value = rand(300, 2000);
+        this.bandpassLfo.connect(bpDepth);
+        bpDepth.connect(this.bandpass.frequency);
+        this.bandpassLfo.start();
+
+        wetPrev.connect(this.bandpass);
+        wetPrev = this.bandpass;
+      }
+
+      // Comb filter (K) — short delay with strong feedback
+      if (keys.has('k')) {
+        const combDelay = audioCtx.createDelay(0.05);
+        combDelay.delayTime.value = rand(0.010, 0.028);
+        const combFb = audioCtx.createGain();
+        combFb.gain.value = rand(0.50, 0.85);
+        combDelay.connect(combFb);
+        combFb.connect(combDelay);
+
+        wetPrev.connect(combDelay);
+        wetPrev = combDelay;
+      }
+
+      // Warmth (L) — lowpass with soft saturation
+      if (keys.has('l')) {
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = rand(1200, 3200);
+        lp.Q.value = rand(0.4, 0.8);
+        const sat = audioCtx.createWaveShaper();
+        sat.curve = makeDistortionCurve(rand(12, 24));
+        sat.oversample = '2x';
+
+        wetPrev.connect(lp);
+        lp.connect(sat);
+        wetPrev = sat;
+      }
+
+      // Rectifier (O) — octave-like harmonics
+      if (keys.has('o')) {
+        const rect = audioCtx.createWaveShaper();
+        rect.curve = makeRectifierCurve();
+        rect.oversample = '2x';
+        wetPrev.connect(rect);
+        wetPrev = rect;
+      }
+
+      // Auto-wah (W) — bandpass center automated by LFO
+      if (keys.has('w')) {
+        this.wah = audioCtx.createBiquadFilter();
+        this.wah.type = 'bandpass';
+        this.wah.Q.value = rand(6, 12);
+        this.wahLfo = audioCtx.createOscillator();
+        this.wahLfo.frequency.value = rand(0.6, 2.5);
+        const wahDepth = audioCtx.createGain();
+        wahDepth.gain.value = rand(800, 2400);
+        this.wahLfo.connect(wahDepth);
+        wahDepth.connect(this.wah.frequency);
+        this.wahLfo.start();
+
+        wetPrev.connect(this.wah);
+        wetPrev = this.wah;
+      }
+
+      // Phase-wash (Y) — alternate phaser voicing
+      if (keys.has('y')) {
+        this.phaser2Lfo = audioCtx.createOscillator();
+        this.phaser2Lfo.frequency.value = rand(0.05, 0.3);
+        for (let i = 0; i < 3; i++) {
+          const ap = audioCtx.createBiquadFilter();
+          ap.type = 'allpass';
+          ap.frequency.value = rand(150, 600);
+          ap.Q.value = 0.9;
+          const depth = audioCtx.createGain();
+          depth.gain.value = rand(80, 300);
+          this.phaser2Lfo.connect(depth);
+          depth.connect(ap.frequency);
+          wetPrev.connect(ap);
+          wetPrev = ap;
+        }
+        this.phaser2Lfo.start();
+      }
+
+      // Wow (T) — slow pitch wander
+      if (keys.has('t')) {
+        this.wowLfo = audioCtx.createOscillator();
+        this.wowLfo.frequency.value = rand(0.2, 0.6);
+        const wowDepth = audioCtx.createGain();
+        wowDepth.gain.value = rand(5, 15); // cents
+        this.wowLfo.connect(wowDepth);
+        wowDepth.connect(this.osc.detune);
+        this.wowLfo.start();
+      }
+
+      // Exciter (U) — bright shelf into mild saturation
+      if (keys.has('u')) {
+        const hs = audioCtx.createBiquadFilter();
+        hs.type = 'highshelf';
+        hs.frequency.value = rand(2500, 4500);
+        hs.gain.value = rand(4, 8);
+        const sat = audioCtx.createWaveShaper();
+        sat.curve = makeDistortionCurve(rand(10, 20));
+        sat.oversample = '2x';
+        wetPrev.connect(hs);
+        hs.connect(sat);
+        wetPrev = sat;
+      }
+
       // Wet mix
       this.wetGain = audioCtx.createGain();
       const hasFx = Array.from(keys).some(k => k !== 'z' && k !== 'x'); // any chain effect present
@@ -381,7 +602,7 @@ console.log("Static site loaded!");
       } catch (_) {}
 
       setTimeout(() => {
-        ['vibratoLfo', 'tremoloLfo', 'autopanLfo', 'flangerLfo', 'chorusLfo', 'phaserLfo', 'ringLfo'].forEach(name => {
+        ['vibratoLfo', 'tremoloLfo', 'autopanLfo', 'flangerLfo', 'chorusLfo', 'phaserLfo', 'phaser2Lfo', 'ringLfo', 'bandpassLfo', 'wahLfo', 'wowLfo'].forEach(name => {
           const node = this[name];
           if (node) { try { node.stop(); } catch (_) {} }
         });
