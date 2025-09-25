@@ -40,7 +40,7 @@ console.log("Static site loaded!");
   masterGain.gain.value = 0.25;
   masterGain.connect(audioCtx.destination);
 
-  const PREVIEW_LEVEL = 0.12;
+  const PREVIEW_LEVEL = 0.35;
   const PLAY_LEVEL = 0.35;
 
   const activeKeys = new Set(); // lowercased keys currently held
