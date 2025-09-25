@@ -394,6 +394,8 @@ console.log("Static site loaded!");
   // --- Interaction state ---
   let pointer = { x: 0, y: 0, down: false };
   let pointerVoice = null;
+  let pointerIn = false; // whether cursor is inside canvas
+  let previewHeld = false; // spacebar preview mode
   const marks = []; // sustained notes: {x, y, voice, effects:Set<string>}
 
   // Randomize effects helper (Q held)
@@ -493,29 +495,43 @@ console.log("Static site loaded!");
     if (pointer.down) {
       updatePointerVoice(x, y);
     } else {
-      // live preview while hovering
-      startPointerVoice(x, y, PREVIEW_LEVEL);
+      if (previewHeld) {
+        startPointerVoice(x, y, PREVIEW_LEVEL);
+      } else {
+        pointer.x = x; pointer.y = y;
+      }
     }
   });
 
   canvas.addEventListener('pointerup', () => {
     pointer.down = false;
-    if (pointerVoice) {
-      pointerVoice.setAmplitude(PREVIEW_LEVEL);
+    if (previewHeld) {
+      if (pointerVoice) {
+        pointerVoice.setAmplitude(PREVIEW_LEVEL);
+      } else {
+        startPointerVoice(pointer.x, pointer.y, PREVIEW_LEVEL);
+      }
     } else {
-      startPointerVoice(pointer.x, pointer.y, PREVIEW_LEVEL);
+      stopPointerVoice();
     }
   });
 
   // Hover enter/leave to manage preview lifecycle
   canvas.addEventListener('pointerenter', (evt) => {
-    resumeAudio();
+    pointerIn = true;
     const { x, y } = getLocalPos(evt);
-    startPointerVoice(x, y, PREVIEW_LEVEL);
+    if (previewHeld) {
+      resumeAudio();
+      startPointerVoice(x, y, PREVIEW_LEVEL);
+    } else {
+      // no audio while hovering unless spacebar held
+      pointer.x = x; pointer.y = y;
+    }
   });
 
   canvas.addEventListener('pointerleave', () => {
     pointer.down = false;
+    pointerIn = false;
     stopPointerVoice();
   });
 
@@ -537,7 +553,24 @@ console.log("Static site loaded!");
       return;
     }
 
-    // Resume audio on any key press to enable preview
+    // Spacebar holds preview
+    if (evt.code === 'Space') {
+      evt.preventDefault();
+      if (!previewHeld) {
+        previewHeld = true;
+        resumeAudio();
+        if (!pointer.down) {
+          if (pointerIn) {
+            startPointerVoice(pointer.x, pointer.y, PREVIEW_LEVEL);
+          } else if (pointerVoice) {
+            pointerVoice.setAmplitude(PREVIEW_LEVEL);
+          }
+        }
+      }
+      return;
+    }
+
+    // Resume audio for effect changes
     resumeAudio();
 
     const k = (evt.key || '').toLowerCase();
@@ -550,10 +583,20 @@ console.log("Static site loaded!");
       }
       draw();
     }
-  });
+  }new)</;
   window.addEventListener('keyup', (evt) => {
     // Ignore legend toggle on keyup
     if ((evt.key === '`') || (evt.code === 'Backquote')) {
+      return;
+    }
+
+    // Spacebar releases preview
+    if (evt.code === 'Space') {
+      evt.preventDefault();
+      previewHeld = false;
+      if (!pointer.down) {
+        stopPointerVoice();
+      }
       return;
     }
 
@@ -571,11 +614,8 @@ console.log("Static site loaded!");
   window.addEventListener('blur', () => {
     // release keys if window loses focus
     activeKeys.clear();
-    if (pointerVoice) {
-      const { x, y } = pointer;
-      stopPointerVoice();
-      startPointerVoice(x, y, pointer.down ? PLAY_LEVEL : PREVIEW_LEVEL);
-    }
+    previewHeld = false;
+    stopPointerVoice();
     draw();
   });
 
@@ -652,14 +692,16 @@ console.log("Static site loaded!");
     }
     ctx2d.restore();
 
-    // live pitch/tone readout
+    // live pitch/tone readout (bottom-right)
     const f = freqFromX(pointer.x);
     const c = cutoffFromY(pointer.y);
     const noteText = `Pitch ~ ${Math.round(f)} Hz | Tone cutoff ~ ${Math.round(c)} Hz`;
     ctx2d.save();
     ctx2d.font = '500 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    ctx2d.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx2d.fillText(noteText, 12, 18);
+    ctx2d.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx2d.textAlign = 'right';
+    ctx2d.textBaseline = 'bottom';
+    ctx2d.fillText(noteText, w - 12, h - 12);
     ctx2d.restore();
   };
 
