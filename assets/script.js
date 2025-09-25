@@ -784,6 +784,35 @@ console.log("Static site loaded!");
     marks.push({ x, y, voice, effects: keys });
   };
 
+  // Find the nearest sustained mark within a hit radius; returns its index or -1
+  const findMarkIndexNear = (x, y, radius = 14) => {
+    let idx = -1;
+    let bestD2 = radius * radius;
+    for (let i = 0; i < marks.length; i++) {
+      const m = marks[i];
+      const dx = m.x - x;
+      const dy = m.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        idx = i;
+      }
+    }
+    return idx;
+  };
+
+  // Remove a sustained mark at a location (if present). Returns true if removed.
+  const removeSustainedAt = (x, y, radius = 14) => {
+    const idx = findMarkIndexNear(x, y, radius);
+    if (idx >= 0) {
+      const m = marks[idx];
+      try { m.voice.stop(); } catch (_) {}
+      marks.splice(idx, 1);
+      return true;
+    }
+    return false;
+  };
+
   const clearAll = () => {
     for (const m of marks) {
       try { m.voice.stop(); } catch (_) {}
@@ -860,10 +889,13 @@ console.log("Static site loaded!");
     stopPointerVoice();
   });
 
-  // Click to mark and sustain
+  // Click to toggle sustain at location
   canvas.addEventListener('click', (evt) => {
     const { x, y } = getLocalPos(evt);
-    addSustainedMark(x, y);
+    // If clicking near an existing mark, remove it; else add a new sustained note.
+    if (!removeSustainedAt(x, y, 16)) {
+      addSustainedMark(x, y);
+    }
   });
 
   // Clear button
