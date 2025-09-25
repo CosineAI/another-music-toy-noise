@@ -50,6 +50,19 @@ console.log("Static site loaded!");
     return min * Math.pow(ratio, 1 - ny); // top bright, bottom mellow
   };
 
+  // Random helpers
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const randInt = (min, max) => Math.floor(rand(min, max + 1));
+  const pickN = (arr, n) => {
+    const copy = arr.slice();
+    const out = [];
+    while (copy.length && out.length < n) {
+      const i = randInt(0, copy.length - 1);
+      out.push(copy.splice(i, 1)[0]);
+    }
+    return out;
+  };
+
   // Distortion curve factory
   const makeDistortionCurve = (amount = 160) => {
     const n = 2048;
@@ -77,6 +90,25 @@ console.log("Static site loaded!");
     return impulse;
   };
 
+  // Effect color map for visual rings
+  const effectColors = {
+    z: '#3b82f6', // Vibrato
+    x: '#f59e0b', // Tremolo
+    c: '#10b981', // Delay
+    v: '#ef4444', // Distortion
+    b: '#8b5cf6', // Reverb
+    a: '#22d3ee', // Autopan
+    f: '#0ea5e9', // Flanger
+    m: '#34d399', // Chorus
+    p: '#f472b6', // Phaser
+    h: '#7c3aed', // Highpass
+    n: '#6b7280', // Noise
+    r: '#eab308', // RingMod
+    s: '#fb7185', // Saturation
+  };
+
+  const FX_KEYS = Object.keys(effectColors);
+
   // Voice object: oscillator + filter + amp, optional effects per snapshot of activeKeys
   class Voice {
     constructor({ freq, cutoff, keys }) {
@@ -102,53 +134,193 @@ console.log("Static site loaded!");
       this.amp.connect(this.dryGain);
       this.dryGain.connect(masterGain);
 
-      // Wet chain (conditionally assembled)
+      // Wet chain (conditionally assembled) as sequential pipeline
       let wetPrev = this.amp;
-      const chain = [];
+
+      // Ring Mod (R) — multiply by audio-rate LFO
+      if (keys.has('r')) {
+        this.ringGain = audioCtx.createGain();
+        this.ringGain.gain.value = 1.0;
+        this.ringLfo = audioCtx.createOscillator();
+        this.ringLfo.frequency.value = rand(30, 80);
+        const ringDepth = audioCtx.createGain();
+        ringDepth.gain.value = 0.5;
+        this.ringBias = audioCtx.createConstantSource();
+        this.ringBias.offset.value = 0.5;
+        this.ringLfo.connect(ringDepth);
+        ringDepth.connect(this.ringGain.gain);
+        this.ringBias.connect(this.ringGain.gain);
+        this.ringLfo.start();
+        this.ringBias.start();
+
+        wetPrev.connect(this.ringGain);
+        wetPrev = this.ringGain;
+      }
+
+      // Autopan (A) — Stereo Panner modulated by slow LFO
+      if (keys.has('a')) {
+        this.panner = audioCtx.createStereoPanner();
+        this.autopanLfo = audioCtx.createOscillator();
+        this.autopanLfo.frequency.value = rand(0.2, 1.2);
+        const panDepth = audioCtx.createGain();
+        panDepth.gain.value = 0.9;
+        this.autopanLfo.connect(panDepth);
+        panDepth.connect(this.panner.pan);
+        this.autopanLfo.start();
+
+        wetPrev.connect(this.panner);
+        wetPrev = this.panner;
+      }
 
       // Distortion (V)
       if (keys.has('v')) {
         const shaper = audioCtx.createWaveShaper();
-        shaper.curve = makeDistortionCurve(160);
+        shaper.curve = makeDistortionCurve(rand(140, 220));
         shaper.oversample = '4x';
-        chain.push(shaper);
+        wetPrev.connect(shaper);
+        wetPrev = shaper;
+      }
+
+      // Saturation (S) — softer waveshaper
+      if (keys.has('s')) {
+        const sat = audioCtx.createWaveShaper();
+        sat.curve = makeDistortionCurve(rand(30, 90));
+        sat.oversample = '2x';
+        wetPrev.connect(sat);
+        wetPrev = sat;
+      }
+
+      // Phaser (P) — chain of allpass filters with LFO on frequency
+      if (keys.has('p')) {
+        this.phaserLfo = audioCtx.createOscillator();
+        this.phaserLfo.frequency.value = rand(0.1, 0.6);
+        for (let i = 0; i < 4; i++) {
+          const ap = audioCtx.createBiquadFilter();
+          ap.type = 'allpass';
+          ap.frequency.value = rand(300, 1200);
+          ap.Q.value = 0.8;
+          const depth = audioCtx.createGain();
+          depth.gain.value = rand(150, 600);
+          this.phaserLfo.connect(depth);
+          depth.connect(ap.frequency);
+          wetPrev.connect(ap);
+          wetPrev = ap;
+        }
+        this.phaserLfo.start();
+      }
+
+      // Flanger (F) — short delay modulated, with feedback
+      if (keys.has('f')) {
+        const flangerDelay = audioCtx.createDelay(0.05);
+        flangerDelay.delayTime.value = rand(0.005, 0.015);
+        const feedback = audioCtx.createGain();
+        feedback.gain.value = rand(0.15, 0.35);
+        flangerDelay.connect(feedback);
+        feedback.connect(flangerDelay);
+        this.flangerLfo = audioCtx.createOscillator();
+        this.flangerLfo.frequency.value = rand(0.1, 0.5);
+        const depth = audioCtx.createGain();
+        depth.gain.value = rand(0.003, 0.008);
+        this.flangerLfo.connect(depth);
+        depth.connect(flangerDelay.delayTime);
+        this.flangerLfo.start();
+
+        wetPrev.connect(flangerDelay);
+        wetPrev = flangerDelay;
+      }
+
+      // Chorus (M) — dual modulated delays mixed back
+      if (keys.has('m')) {
+        const sum = audioCtx.createGain();
+        this.chorusLfo = audioCtx.createOscillator();
+        this.chorusLfo.frequency.value = rand(0.6, 1.8);
+        const makeChDelay = (baseMs, depthMs) => {
+          const d = audioCtx.createDelay(0.05);
+          d.delayTime.value = baseMs / 1000;
+          const g = audioCtx.createGain();
+          g.gain.value = depthMs / 1000;
+          this.chorusLfo.connect(g);
+          g.connect(d.delayTime);
+          return d;
+        };
+        const d1 = makeChDelay(rand(12, 24), rand(2, 5));
+        const d2 = makeChDelay(rand(18, 32), rand(2, 5));
+        wetPrev.connect(d1);
+        wetPrev.connect(d2);
+        d1.connect(sum);
+        d2.connect(sum);
+        this.chorusLfo.start();
+
+        wetPrev = sum;
       }
 
       // Delay (C)
       if (keys.has('c')) {
         const delay = audioCtx.createDelay(5.0);
-        delay.delayTime.value = 0.26;
+        delay.delayTime.value = rand(0.18, 0.42);
         const feedback = audioCtx.createGain();
-        feedback.gain.value = 0.35;
+        feedback.gain.value = rand(0.25, 0.5);
         delay.connect(feedback);
         feedback.connect(delay);
-        chain.push(delay);
+        wetPrev.connect(delay);
+        wetPrev = delay;
       }
 
       // Reverb (B)
       if (keys.has('b')) {
         const convolver = audioCtx.createConvolver();
-        convolver.buffer = createImpulseBuffer(audioCtx, 2.6, 0.5);
-        chain.push(convolver);
+        convolver.buffer = createImpulseBuffer(audioCtx, rand(1.8, 3.5), rand(0.35, 0.6));
+        wetPrev.connect(convolver);
+        wetPrev = convolver;
       }
 
-      for (const node of chain) {
-        wetPrev.connect(node);
-        wetPrev = node;
+      // Highpass (H) — clean low end
+      if (keys.has('h')) {
+        const hp = audioCtx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = rand(120, 380);
+        hp.Q.value = 0.7;
+        wetPrev.connect(hp);
+        wetPrev = hp;
       }
 
+      // Wet mix
       this.wetGain = audioCtx.createGain();
-      this.wetGain.gain.value = chain.length ? 0.55 : 0; // only if effects present
+      const hasFx = Array.from(keys).some(k => k !== 'z' && k !== 'x'); // any chain effect present
+      this.wetGain.gain.value = hasFx ? 0.55 : 0;
       wetPrev.connect(this.wetGain);
       this.wetGain.connect(masterGain);
+
+      // Noise layer (N) — parallel into wet
+      if (keys.has('n')) {
+        const rate = audioCtx.sampleRate;
+        const length = Math.max(1, Math.floor(0.5 * rate));
+        const buf = audioCtx.createBuffer(1, length, rate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < length; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        this.noiseSrc = audioCtx.createBufferSource();
+        this.noiseSrc.buffer = buf;
+        this.noiseSrc.loop = true;
+        const noiseFilter = audioCtx.createBiquadFilter();
+        noiseFilter.type = 'lowpass';
+        noiseFilter.frequency.value = rand(2000, 8000);
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.value = rand(0.03, 0.12);
+        this.noiseSrc.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(this.wetGain);
+        this.noiseSrc.start();
+      }
 
       // LFOs
       // Vibrato (Z) — modulate detune in cents
       if (keys.has('z')) {
         this.vibratoLfo = audioCtx.createOscillator();
-        this.vibratoLfo.frequency.value = 6;
+        this.vibratoLfo.frequency.value = rand(5, 8);
         this.vibratoDepth = audioCtx.createGain();
-        this.vibratoDepth.gain.value = 30; // cents
+        this.vibratoDepth.gain.value = rand(15, 40); // cents
         this.vibratoLfo.connect(this.vibratoDepth);
         this.vibratoDepth.connect(this.osc.detune);
         this.vibratoLfo.start();
@@ -157,7 +329,7 @@ console.log("Static site loaded!");
       // Tremolo (X) — modulate amplitude gently
       if (keys.has('x')) {
         this.tremoloLfo = audioCtx.createOscillator();
-        this.tremoloLfo.frequency.value = 4.5;
+        this.tremoloLfo.frequency.value = rand(3.5, 6);
         this.tremoloDepth = audioCtx.createGain();
         this.tremoloDepth.gain.value = 0.15; // add ±0.15 to base
         this.tremoloLfo.connect(this.tremoloDepth);
@@ -186,17 +358,15 @@ console.log("Static site loaded!");
         this.amp.gain.cancelScheduledValues(now);
         this.amp.gain.linearRampToValueAtTime(0, now + 0.08);
         this.osc.stop(now + 0.10);
-      } catch (_) {
-        // oscillator may already be stopped
-      }
-      // tidy LFOs shortly after
+      } catch (_) {}
+
       setTimeout(() => {
-        if (this.vibratoLfo) {
-          try { this.vibratoLfo.stop(); } catch (_) {}
-        }
-        if (this.tremoloLfo) {
-          try { this.tremoloLfo.stop(); } catch (_) {}
-        }
+        ['vibratoLfo', 'tremoloLfo', 'autopanLfo', 'flangerLfo', 'chorusLfo', 'phaserLfo', 'ringLfo'].forEach(name => {
+          const node = this[name];
+          if (node) { try { node.stop(); } catch (_) {} }
+        });
+        if (this.ringBias) { try { this.ringBias.stop(); } catch (_) {} }
+        if (this.noiseSrc) { try { this.noiseSrc.stop(); } catch (_) {} }
       }, 200);
     }
   }
@@ -204,15 +374,34 @@ console.log("Static site loaded!");
   // --- Interaction state ---
   let pointer = { x: 0, y: 0, down: false };
   let pointerVoice = null;
-  const marks = []; // sustained notes: {x, y, voice}
+  const marks = []; // sustained notes: {x, y, voice, effects:Set<string>}
+
+  // Randomize effects helper (Q held)
+  const randomizeEffects = (baseKeys) => {
+    const base = new Set(baseKeys);
+    base.delete('q');
+    const pool = FX_KEYS.slice();
+    // remove any already in base to avoid duplicates
+    for (const k of base) {
+      const idx = pool.indexOf(k);
+      if (idx >= 0) pool.splice(idx, 1);
+    }
+    // pick 2-6 random additional effects
+    const count = randInt(2, 6);
+    const picks = pickN(pool, count);
+    for (const p of picks) base.add(p);
+    return base;
+  };
 
   const startPointerVoice = (x, y) => {
     pointer.x = x; pointer.y = y;
     if (!pointerVoice) {
+      const keysSnapshot = new Set(activeKeys);
+      const keys = keysSnapshot.has('q') ? randomizeEffects(keysSnapshot) : keysSnapshot;
       pointerVoice = new Voice({
         freq: freqFromX(x),
         cutoff: cutoffFromY(y),
-        keys: new Set(activeKeys) // snapshot
+        keys
       });
       pointerVoice.start();
     } else {
@@ -235,13 +424,16 @@ console.log("Static site loaded!");
   };
 
   const addSustainedMark = (x, y) => {
+    let keysSnapshot = new Set(activeKeys);
+    const keys = keysSnapshot.has('q') ? randomizeEffects(keysSnapshot) : keysSnapshot;
+    keys.delete('q');
     const voice = new Voice({
       freq: freqFromX(x),
       cutoff: cutoffFromY(y),
-      keys: new Set(activeKeys) // capture effects at click
+      keys
     });
     voice.start();
-    marks.push({ x, y, voice });
+    marks.push({ x, y, voice, effects: keys });
   };
 
   const clearAll = () => {
@@ -299,15 +491,12 @@ console.log("Static site loaded!");
   clearBtn.addEventListener('click', clearAll);
 
   // Keyboard effects (hold to apply)
-  const effectKeys = new Set(['z', 'x', 'c', 'v', 'b']);
+  const effectKeys = new Set([...FX_KEYS, 'q']); // include randomize trigger
   window.addEventListener('keydown', (evt) => {
     const k = (evt.key || '').toLowerCase();
     if (effectKeys.has(k) && !activeKeys.has(k)) {
       activeKeys.add(k);
-      // update pointer voice snapshot only by recreating on next down,
-      // sustained voices keep their captured state.
       if (pointerVoice) {
-        // Recreate pointer voice to apply new effect set immediately
         const { x, y } = pointer;
         stopPointerVoice();
         startPointerVoice(x, y);
@@ -343,30 +532,25 @@ console.log("Static site loaded!");
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     ctx2d.clearRect(0, 0, w, h);
+    // Background is handled by CSS gradient; leave canvas clear.
+  };
 
-    // pitch guide (vertical bands)
-    ctx2d.save();
-    const cols = 12;
-    for (let i = 0; i < cols; i++) {
-      const x = (i / cols) * w;
-      ctx2d.fillStyle = i % 2 === 0 ? 'rgba(99,102,241,0.06)' : 'rgba(99,102,241,0.03)';
-      ctx2d.fillRect(x, 0, w / cols, h);
-    }
-    ctx2d.restore();
-
-    // tone guide (horizontal lines)
-    ctx2d.save();
-    ctx2d.strokeStyle = 'rgba(31,41,55,0.12)';
-    ctx2d.lineWidth = 1;
-    const rows = 8;
-    for (let r = 1; r < rows; r++) {
-      const y = (r / rows) * h;
+  const drawEffectRing = (x, y, effects) => {
+    const eff = Array.from(effects).filter(k => effectColors[k]);
+    if (!eff.length) return;
+    const r = 12;
+    const lw = 4;
+    const seg = (Math.PI * 2) / eff.length;
+    let start = Math.random() * Math.PI * 2; // slight random rotation
+    for (let i = 0; i < eff.length; i++) {
+      const k = eff[i];
       ctx2d.beginPath();
-      ctx2d.moveTo(0, y);
-      ctx2d.lineTo(w, y);
+      ctx2d.arc(x, y, r, start + i * seg, start + (i + 1) * seg);
+      ctx2d.strokeStyle = effectColors[k];
+      ctx2d.lineWidth = lw;
+      ctx2d.lineCap = 'round';
       ctx2d.stroke();
     }
-    ctx2d.restore();
   };
 
   const drawMarks = () => {
@@ -375,6 +559,7 @@ console.log("Static site loaded!");
 
     // sustained marks
     for (const m of marks) {
+      // base dot
       ctx2d.save();
       ctx2d.beginPath();
       ctx2d.arc(m.x, m.y, 8, 0, Math.PI * 2);
@@ -384,9 +569,12 @@ console.log("Static site loaded!");
       ctx2d.lineWidth = 2;
       ctx2d.stroke();
       ctx2d.restore();
+
+      // effect ring
+      drawEffectRing(m.x, m.y, m.effects);
     }
 
-    // pointer indicator
+    // pointer indicator + current effects ring
     if (pointer.down || pointerVoice) {
       ctx2d.save();
       ctx2d.beginPath();
@@ -397,6 +585,8 @@ console.log("Static site loaded!");
       ctx2d.lineWidth = 2;
       ctx2d.stroke();
       ctx2d.restore();
+
+      drawEffectRing(pointer.x, pointer.y, activeKeys);
     }
 
     // effects badges
@@ -405,7 +595,7 @@ console.log("Static site loaded!");
     if (keys.length) {
       const text = `Effects: ${keys.map(k => k.toUpperCase()).join(' ')}`;
       ctx2d.font = '600 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-      ctx2d.fillStyle = 'rgba(31,41,55,0.85)';
+      ctx2d.fillStyle = 'rgba(255,255,255,0.9)';
       ctx2d.fillText(text, 12, h - 12);
     }
     ctx2d.restore();
@@ -416,7 +606,7 @@ console.log("Static site loaded!");
     const noteText = `Pitch ~ ${Math.round(f)} Hz | Tone cutoff ~ ${Math.round(c)} Hz`;
     ctx2d.save();
     ctx2d.font = '500 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    ctx2d.fillStyle = 'rgba(31,41,55,0.7)';
+    ctx2d.fillStyle = 'rgba(255,255,255,0.8)';
     ctx2d.fillText(noteText, 12, 18);
     ctx2d.restore();
   };
