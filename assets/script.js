@@ -583,7 +583,7 @@ console.log("Static site loaded!");
       }
       draw();
     }
-  }new)</;
+  });
   window.addEventListener('keyup', (evt) => {
     // Ignore legend toggle on keyup
     if ((evt.key === '`') || (evt.code === 'Backquote')) {
