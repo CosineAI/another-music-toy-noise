@@ -9,6 +9,17 @@ console.log("Static site loaded!");
 
   const ctx2d = canvas.getContext('2d');
 
+  // Legend toggle
+  const legendEl = document.querySelector('.legend');
+  let legendVisible = true;
+  const setLegendVisibility = (visible) => {
+    legendVisible = !!visible;
+    if (legendEl) {
+      legendEl.style.display = legendVisible ? '' : 'none';
+    }
+  };
+  setLegendVisibility(true);
+
   // Resize canvas to match CSS size and handle HiDPI
   const resizeCanvas = () => {
     const dpr = window.devicePixelRatio || 1;
@@ -493,6 +504,12 @@ console.log("Static site loaded!");
   // Keyboard effects (hold to apply)
   const effectKeys = new Set([...FX_KEYS, 'q']); // include randomize trigger
   window.addEventListener('keydown', (evt) => {
+    // Toggle legend with backquote `
+    if ((evt.key === '`') || (evt.code === 'Backquote')) {
+      setLegendVisibility(!legendVisible);
+      return;
+    }
+
     const k = (evt.key || '').toLowerCase();
     if (effectKeys.has(k) && !activeKeys.has(k)) {
       activeKeys.add(k);
@@ -505,6 +522,11 @@ console.log("Static site loaded!");
     }
   });
   window.addEventListener('keyup', (evt) => {
+    // Ignore legend toggle on keyup
+    if ((evt.key === '`') || (evt.code === 'Backquote')) {
+      return;
+    }
+
     const k = (evt.key || '').toLowerCase();
     if (effectKeys.has(k) && activeKeys.has(k)) {
       activeKeys.delete(k);
