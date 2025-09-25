@@ -3,16 +3,51 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>My Static Site</title>
+  <title>Mouse Music Toy</title>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
-  <main>
-    <h1>Welcome to Your Static Site</h1>
-  </main>
-  <footer>
-    <p>&copy; 2025 Your Name</p>
-  </footer>
+  <div class="controls">
+    <button id="clearCanvas" class="btn">Clear Screen</button>
+    <div class="legend">
+      <span><strong>A</strong> Autopan</span>
+      <span><strong>B</strong> Reverb</span>
+      <span><strong>C</strong> Delay</span>
+      <span><strong>D</strong> Bitcrusher</span>
+      <span><strong>E</strong> Echo</span>
+      <span><strong>F</strong> Flanger</span>
+      <span><strong>G</strong> Compressor</span>
+      <span><strong>H</strong> Highpass</span>
+      <span><strong>I</strong> Stereo Spread</span>
+      <span><strong>J</strong> Bandpass Sweep</span>
+      <span><strong>K</strong> Comb Filter</span>
+      <span><strong>L</strong> Warmth</span>
+      <span><strong>M</strong> Chorus</span>
+      <span><strong>N</strong> Noise</span>
+      <span><strong>O</strong> Rectifier</span>
+      <span><strong>P</strong> Phaser</span>
+      <span><strong>Q</strong> Randomize</span>
+      <span><strong>R</strong> Ring Mod</span>
+      <span><strong>S</strong> Saturation</span>
+      <span><strong>T</strong> Wow</span>
+      <span><strong>U</strong> Exciter</span>
+      <span><strong>V</strong> Distortion</span>
+      <span><strong>W</strong> Auto-wah</span>
+      <span><strong>X</strong> Tremolo</span>
+      <span><strong>Y</strong> Phase-wash</span>
+      <span><strong>Z</strong> Vibrato</span>
+      <span><strong>Space</strong> Preview</span>
+      <span><strong>`</strong> Toggle Legend</span>
+      <span><strong>1</strong> Y: LP Gamma</span>
+      <span><strong>2</strong> Y: LP + Resonance</span>
+      <span><strong>3</strong> Y: LP/BP/HP Zones</span>
+      <span><strong>4</strong> Y: Wave Morph</span>
+      <span><strong>5</strong> Y: Macro Character</span>
+    </div>
+  </div>
+
+  <canvas id="playCanvas" aria-label="Play area: click to sustain notes"></canvas>
+
   <script src="assets/script.js"></script>
 </body>
 </html>

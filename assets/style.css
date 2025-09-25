@@ -60,3 +60,73 @@ footer {
   }
 
 }
+
+/* --- Music toy styles --- */
+.subtitle {
+  margin-top: 0.5rem;
+  color: #4a5568;
+  font-size: 0.95rem;
+}
+
+.controls {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 12px;
+  background: rgba(17, 24, 39, 0.4);
+  backdrop-filter: blur(6px);
+  color: #f8fafc;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.btn {
+  appearance: none;
+  border: none;
+  background: #3b82f6;
+  color: white;
+  padding: 0.6rem 1rem;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25);
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn:hover {
+  background: #2563eb;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+
+.legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.4rem 0.8rem;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  max-width: min(90vw, 900px);
+}
+.legend span {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.legend span strong {
+  color: #ffffff;
+}
+
+#playCanvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 50%, #ef4444 100%);
+}
