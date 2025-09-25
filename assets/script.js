@@ -64,6 +64,93 @@ console.log("Static site loaded!");
     return min * Math.pow(ratio, 1 - ny); // top bright, bottom mellow
   };
 
+  // Y-mode switching (1–5)
+  let yMode = 1; // 1: LP gamma, 2: LP+Q travel, 3: LP/BP/HP zones, 4: wave morph, 5: macro character
+
+  const toneFromY = (y) => {
+    const h = canvas.clientHeight || 1;
+    const ny = Math.min(1, Math.max(0, y / h));
+    const min = 200;
+    const max = 10000;
+    const ratio = max / min;
+
+    let cutoff = min * Math.pow(ratio, 1 - ny);
+    let q = 0.9;
+    let filterType = 'lowpass';
+    let oscType = undefined;
+    let wetMix = undefined;
+
+    switch (yMode) {
+      case 1: {
+        // LP gamma-shaped for more control in mid/top
+        const gamma = 0.85;
+        cutoff = min * Math.pow(ratio, Math.pow(1 - ny, gamma));
+        q = 0.9;
+        filterType = 'lowpass';
+        break;
+      }
+      case 2: {
+        // LP + resonance travel
+        cutoff = min * Math.pow(ratio, 1 - ny);
+        const qMin = 0.6, qMax = 12, qGamma = 1.2;
+        q = qMin + Math.pow(ny, qGamma) * (qMax - qMin);
+        filterType = 'lowpass';
+        break;
+      }
+      case 3: {
+        // LP/BP/HP zones
+        if (ny < 0.33) {
+          const t = ny / 0.33;
+          filterType = 'lowpass';
+          cutoff = min * Math.pow(ratio, 1 - t);
+          q = 0.8;
+        } else if (ny < 0.66) {
+          const t = (ny - 0.33) / 0.33;
+          filterType = 'bandpass';
+          cutoff = 300 + t * 2400; // center frequency sweep
+          q = 3 + t * 7; // from moderate to sharp
+        } else {
+          const t = (ny - 0.66) / 0.34;
+          filterType = 'highpass';
+          cutoff = 1200 + t * 6000; // more cut as we go up
+          q = 0.9;
+        }
+        break;
+      }
+      case 4: {
+        // Waveform morph (sine -> triangle -> sawtooth -> square)
+        cutoff = min * Math.pow(ratio, 1 - ny);
+        if (ny < 0.25) oscType = 'sine';
+        else if (ny < 0.5) oscType = 'triangle';
+        else if (ny < 0.75) oscType = 'sawtooth';
+        else oscType = 'square';
+        filterType = 'lowpass';
+        q = 0.9;
+        break;
+      }
+      case 5: {
+        // Macro character: lead (top) -> pad (bottom)
+        const bright = 1 - ny;
+        cutoff = min * Math.pow(ratio, 1 - ny);
+        q = 0.7 + ny * 5; // more resonance toward pad area
+        filterType = 'lowpass';
+        wetMix = 0.1 + ny * 0.6; // more wet toward bottom
+        if (bright > 0.6) oscType = 'sawtooth';
+        else if (bright > 0.3) oscType = 'triangle';
+        else oscType = 'sine';
+        break;
+      }
+      default:
+        // Fallback: original mapping
+        cutoff = min * Math.pow(ratio, 1 - ny);
+        q = 0.9;
+        filterType = 'lowpass';
+        break;
+    }
+
+    return { cutoff, q, filterType, oscType, wetMix };
+  };
+
   // Random helpers
   const rand = (min, max) => min + Math.random() * (max - min);
   const randInt = (min, max) => Math.floor(rand(min, max + 1));
@@ -162,15 +249,15 @@ console.log("Static site loaded!");
 
   // Voice object: oscillator + filter + amp, optional effects per snapshot of activeKeys
   class Voice {
-    constructor({ freq, cutoff, keys }) {
+    constructor({ freq, tone, keys }) {
       this.osc = audioCtx.createOscillator();
-      this.osc.type = 'sawtooth';
+      this.osc.type = tone.oscType || 'sawtooth';
       this.osc.frequency.value = freq;
 
       this.filter = audioCtx.createBiquadFilter();
-      this.filter.type = 'lowpass';
-      this.filter.frequency.value = cutoff;
-      this.filter.Q.value = 0.9;
+      this.filter.type = tone.filterType || 'lowpass';
+      this.filter.frequency.value = tone.cutoff;
+      this.filter.Q.value = tone.q ?? 0.9;
 
       this.amp = audioCtx.createGain();
       this.amp.gain.value = 0; // envelope
@@ -522,7 +609,8 @@ console.log("Static site loaded!");
       // Wet mix
       this.wetGain = audioCtx.createGain();
       const hasFx = Array.from(keys).some(k => k !== 'z' && k !== 'x'); // any chain effect present
-      this.wetGain.gain.value = hasFx ? 0.55 : 0;
+      this.hasFx = hasFx;
+      this.wetGain.gain.value = hasFx ? (tone.wetMix ?? 0.55) : 0;
       wetPrev.connect(this.wetGain);
       this.wetGain.connect(masterGain);
 
@@ -581,10 +669,23 @@ console.log("Static site loaded!");
       this.osc.start(now);
     }
 
-    update(freq, cutoff) {
+    update(freq, tone) {
       const now = audioCtx.currentTime;
       this.osc.frequency.setTargetAtTime(freq, now, 0.01);
-      this.filter.frequency.setTargetAtTime(cutoff, now, 0.01);
+      if (tone.filterType && this.filter.type !== tone.filterType) {
+        this.filter.type = tone.filterType;
+      }
+      this.filter.frequency.setTargetAtTime(tone.cutoff, now, 0.01);
+      if (tone.q != null) {
+        this.filter.Q.setTargetAtTime(tone.q, now, 0.03);
+      }
+      if (tone.oscType && this.osc.type !== tone.oscType) {
+        this.osc.type = tone.oscType;
+      }
+      if (this.hasFx && tone.wetMix != null) {
+        // smooth wet mix a bit
+        this.wetGain.gain.setTargetAtTime(tone.wetMix, now, 0.06);
+      }
     }
 
     setAmplitude(target = PLAY_LEVEL, ramp = 0.04) {
@@ -638,17 +739,18 @@ console.log("Static site loaded!");
 
   const startPointerVoice = (x, y, ampLevel = PLAY_LEVEL) => {
     pointer.x = x; pointer.y = y;
+    const tone = toneFromY(y);
     if (!pointerVoice) {
       const keysSnapshot = new Set(activeKeys);
       const keys = keysSnapshot.has('q') ? randomizeEffects(keysSnapshot) : keysSnapshot;
       pointerVoice = new Voice({
         freq: freqFromX(x),
-        cutoff: cutoffFromY(y),
+        tone,
         keys
       });
       pointerVoice.start(ampLevel);
     } else {
-      pointerVoice.update(freqFromX(x), cutoffFromY(y));
+      pointerVoice.update(freqFromX(x), tone);
       pointerVoice.setAmplitude(ampLevel);
     }
   };
@@ -656,7 +758,8 @@ console.log("Static site loaded!");
   const updatePointerVoice = (x, y) => {
     pointer.x = x; pointer.y = y;
     if (pointerVoice) {
-      pointerVoice.update(freqFromX(x), cutoffFromY(y));
+      const tone = toneFromY(y);
+      pointerVoice.update(freqFromX(x), tone);
     }
   };
 
@@ -671,9 +774,10 @@ console.log("Static site loaded!");
     let keysSnapshot = new Set(activeKeys);
     const keys = keysSnapshot.has('q') ? randomizeEffects(keysSnapshot) : keysSnapshot;
     keys.delete('q');
+    const tone = toneFromY(y);
     const voice = new Voice({
       freq: freqFromX(x),
-      cutoff: cutoffFromY(y),
+      tone,
       keys
     });
     voice.start();
@@ -772,6 +876,21 @@ console.log("Static site loaded!");
     if ((evt.key === '`') || (evt.code === 'Backquote')) {
       setLegendVisibility(!legendVisible);
       return;
+    }
+
+    // Number keys 1–5: set Y-mode (not held)
+    if (evt.code && (evt.code.startsWith('Digit') || evt.code.startsWith('Numpad'))) {
+      const n = parseInt(evt.key, 10);
+      if (!isNaN(n) && n >= 1 && n <= 5) {
+        yMode = n;
+        // Recompute tone for current pointer position
+        if (pointerVoice) {
+          const tone = toneFromY(pointer.y);
+          pointerVoice.update(freqFromX(pointer.x), tone);
+        }
+        draw();
+        return;
+      }
     }
 
     // Spacebar holds preview
@@ -915,7 +1034,8 @@ console.log("Static site loaded!");
 
     // live pitch/tone readout (bottom-right)
     const f = freqFromX(pointer.x);
-    const c = cutoffFromY(pointer.y);
+    const tone = toneFromY(pointer.y);
+    const c = tone.cutoff;
     const noteText = `Pitch ~ ${Math.round(f)} Hz | Tone cutoff ~ ${Math.round(c)} Hz`;
     ctx2d.save();
     ctx2d.font = '500 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
